@@ -1,66 +1,45 @@
+
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
-export async function POST(req: Request) {
+export async function POST(request: Request) {
   try {
-    const body = await req.json();
+    const apiKey = process.env.OPENAI_API_KEY;
 
-    const { description, headline, style, format } = body;
-
-    if (!description || !headline) {
+    if (!apiKey) {
       return NextResponse.json(
-        { error: "Descrição e título são obrigatórios." },
+        { error: "A chave da OpenAI não está configurada." },
+        { status: 500 }
+      );
+    }
+
+    const body = await request.json();
+    const message = body.message;
+
+    if (typeof message !== "string" || !message.trim()) {
+      return NextResponse.json(
+        { error: "Envie uma mensagem válida." },
         { status: 400 }
       );
     }
 
-    const prompt = `
-Crie uma thumbnail profissional para YouTube para o escritório DRA ADVOCACIA.
+    const openai = new OpenAI({ apiKey });
 
-Tema:
-${description}
-
-Texto principal:
-${headline}
-
-Estilo:
-${style}
-
-Formato:
-${format}
-
-A thumbnail deve ter aparência profissional, moderna e sofisticada,
-alto contraste, composição visual forte, poucos elementos e estética
-de conteúdo jurídico premium.
-`;
-
-    const result = await openai.images.generate({
-      model: "gpt-image-2",
-      prompt,
+    const response = await openai.responses.create({
+      model: "gpt-4.1-mini",
+      instructions:
+        "Você é a DRA IA, assistente de criação e estratégia de conteúdo. Responda em português brasileiro, com clareza, organização e foco prático.",
+      input: message.trim(),
     });
-
-    const imageBase64 = result.data?.[0]?.b64_json;
-
-    if (!imageBase64) {
-      throw new Error("A API não retornou a imagem.");
-    }
 
     return NextResponse.json({
-      image: `data:image/png;base64,${imageBase64}`,
+      reply: response.output_text,
     });
-  } catch (error: any) {
-    console.error("ERRO OPENAI:", error);
+  } catch (error) {
+    console.error("Erro na rota da DRA IA:", error);
 
     return NextResponse.json(
-      {
-        error:
-          error?.message ||
-          "Erro desconhecido ao gerar a imagem.",
-      },
+      { error: "Não foi possível gerar a resposta. Confira a API e tente novamente." },
       { status: 500 }
     );
   }
