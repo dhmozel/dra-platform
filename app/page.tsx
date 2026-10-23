@@ -2,10 +2,12 @@
 "use client";
 
 import { useState } from "react";
+import ContentStudio from "./components/content-studio";
 
 type Page =
   | "Início"
   | "Thumbnail"
+  | "Estúdio de Conteúdo"
   | "Conteúdo"
   | "Roteiro"
   | "DRA IA"
@@ -28,6 +30,7 @@ type RecordItem = {
 const navigation: { name: Page; icon: string }[] = [
   { name: "Início", icon: "⌂" },
   { name: "Thumbnail", icon: "▧" },
+  { name: "Estúdio de Conteúdo", icon: "✦" },
   { name: "Conteúdo", icon: "✎" },
   { name: "Roteiro", icon: "▤" },
   { name: "DRA IA", icon: "✦" },
@@ -45,6 +48,11 @@ const tools: {
     name: "Thumbnail",
     description: "Planeje capas profissionais",
     icon: "▧",
+  },
+  {
+    name: "Estúdio de Conteúdo",
+    description: "Gere roteiros e textos no padrão DRA para cada rede",
+    icon: "✦",
   },
   {
     name: "Conteúdo",
@@ -401,6 +409,8 @@ export default function Home() {
               </div>
             </section>
           )}
+
+          {page === "Estúdio de Conteúdo" && <ContentStudio />}
 
           {page === "DRA IA" && (
             <section className="mx-auto flex min-h-[65vh] max-w-4xl flex-col">
