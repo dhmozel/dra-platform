@@ -22,6 +22,8 @@ REGRAS OBRIGATÓRIAS:
 function promptFor(format: string, topic: string, goal: string, duration: string, transcript: string) {
   const context = `FORMATO: ${format}\nASSUNTO: ${topic}\nOBJETIVO/PALAVRA-CHAVE: ${goal || "não especificado"}\nDURAÇÃO: ${duration}\nTRANSCRIÇÃO/CONTEXTO: ${transcript || "Não fornecido."}`;
   const prompts: Record<string, string> = {
+    "Roteiro normal": `Crie um roteiro estruturado para vídeo normal de YouTube com a duração solicitada. Entregue blocos: título de trabalho; objetivo e público; gancho de abertura; introdução; desenvolvimento em seções com falas naturais e transições; conclusão; CTA adequado. Desenvolva o suficiente para a duração, sinalize afirmações que precisam de revisão jurídica e não invente leis ou resultados.`,
+    "Roteiro Shorts": `Crie um roteiro estruturado para YouTube Shorts com a duração solicitada. Entregue blocos: gancho para os primeiros segundos; fala completa em frases naturais; desenvolvimento objetivo; conclusão e CTA adequado. Mantenha ritmo vertical e foco em uma única ideia. Sinalize afirmações que precisam de revisão jurídica; não invente leis ou resultados.`,
     "YouTube longo": `Crie pacote editorial para vídeo longo horizontal do YouTube. Gere 3 títulos com até 70 caracteres, sem caixa alta e com o assunto no início; uma descrição seguindo este padrão: abertura explicando o assunto e benefício possível sem prometer resultado, seção "📌 ACOMPANHE O NOSSO TRABALHO: • Instagram: @dradanielarigol", seção "⏱️ CAPÍTULOS DO VÍDEO:" com 8 a 10 capítulos que contam a história do vídeo, primeiro capítulo em 00:00, e 5 hashtags minúsculas. Se não houver transcrição com timestamps, NÃO invente tempos: deixe os tempos como "[CRONOMETRAR]" exceto 00:00 e sinalize que precisam ser conferidos. Gere também 3 opções de texto de thumbnail com pelo menos 3 palavras em maiúsculas e uma direção visual 16:9: Dra. de um lado, texto do outro, alto contraste dourado/amarelo e branco, cenário e expressão variados. Inclua checklist de revisão antes de publicar.`,
     "Reels": `Crie um roteiro vertical de ${duration}, com gancho forte nos 3 primeiros segundos, fala completa em frases naturais, desenvolvimento claro, CTA final e legenda do Reels. A legenda deve seguir o padrão: "Se você é aposentado, pensionista ou militar da reserva/reforma e [situação ligada ao assunto], atenção."; parágrafo curto explicando o tema; frase de virada; CTA com palavra-chave de comentário coerente com a automação (sugira uma e marque para confirmar); fechamento "Siga @dradanielarigol para acompanhar informações sobre seus direitos." Não use hashtags na legenda-modelo, não prometa resultados nem exponha clientes. Gere também 3 opções de capa, pelo menos 3 palavras em maiúsculas, texto e rosto dentro da área central 3:4 do formato 9:16.`,
     "YouTube Shorts": `Crie pacote para YouTube Shorts com roteiro vertical de ${duration} (se solicitado), 3 títulos com até 60 caracteres, sem caixa alta e com assunto primeiro, descrição de 2 linhas + "📌 Instagram: @dradanielarigol" + #shorts #direitomilitar #isençãodeir. O vídeo não deve ter marca d'água de outra plataforma. Não prometa resultados nem exponha clientes.`,
@@ -33,17 +35,51 @@ function promptFor(format: string, topic: string, goal: string, duration: string
   return `${context}\n\nTAREFA:\n${prompts[format] || prompts["YouTube longo"]}\n\nRetorne JSON válido neste formato: {"outputs":[{"title":"Nome do bloco","content":"Texto completo"}]}. Crie blocos separados para cada entrega.`;
 }
 
+function normalizeGeneratedText(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLocaleLowerCase("pt-BR");
+}
+
+type ScriptSectionKey = "title" | "objective" | "hook" | "introduction" | "development" | "conclusion" | "cta";
+type OutputShape = { title: string; content: string };
+
+const scriptSectionKeys: ScriptSectionKey[] = ["title", "objective", "hook", "introduction", "development", "conclusion", "cta"];
+
+function isOutputShape(value: unknown): value is OutputShape {
+  if (!value || typeof value !== "object") return false;
+  const output = value as Record<string, unknown>;
+  return typeof output.title === "string" && !!output.title.trim() && typeof output.content === "string" && !!output.content.trim();
+}
+
+function parseOutputs(raw: string, echoedRequests: Set<string>): OutputShape[] {
+  const jsonText = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  let parsed: { outputs?: unknown };
+  try {
+    parsed = JSON.parse(jsonText) as { outputs?: unknown };
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed.outputs)) return [];
+  return parsed.outputs
+    .filter(isOutputShape)
+    .filter((output) => !echoedRequests.has(normalizeGeneratedText(output.content)))
+    .slice(0, 12);
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { format, topic, goal, duration, transcript } = body ?? {};
-    const allowed = ["YouTube longo", "Reels", "YouTube Shorts", "TikTok", "Stories", "Comunidade WhatsApp", "Carrossel"];
+    const { format, topic, goal, duration, transcript, mode, missingSections, existingOutputs } = body ?? {};
+    const allowed = ["YouTube longo", "Roteiro normal", "Roteiro Shorts", "Reels", "YouTube Shorts", "TikTok", "Stories", "Comunidade WhatsApp", "Carrossel"];
 
     if (typeof format !== "string" || !allowed.includes(format)) {
       return NextResponse.json({ error: "Escolha um formato válido." }, { status: 400 });
     }
     if (typeof topic !== "string" || !topic.trim() || topic.length > 5000) {
       return NextResponse.json({ error: "Informe um assunto de até 5.000 caracteres." }, { status: 400 });
+    }
+    const durations = ["1 minuto", "1 minuto e 30 segundos", "3 minutos", "5 minutos", "10 minutos", "15 minutos"];
+    if (duration !== undefined && (typeof duration !== "string" || !durations.includes(duration))) {
+      return NextResponse.json({ error: "Escolha uma duração de vídeo válida." }, { status: 400 });
     }
     if (typeof goal === "string" && goal.length > 2000 || typeof transcript === "string" && transcript.length > 30000) {
       return NextResponse.json({ error: "O contexto enviado é muito longo." }, { status: 400 });
@@ -52,22 +88,44 @@ export async function POST(request: Request) {
     if (!apiKey) return NextResponse.json({ error: "Configure OPENAI_API_KEY nas variáveis de ambiente do projeto." }, { status: 500 });
 
     const openai = new OpenAI({ apiKey });
+
+    if (mode === "complete-missing-script-sections") {
+      if ((format !== "Roteiro normal" && format !== "Roteiro Shorts") || !Array.isArray(missingSections) || missingSections.length === 0 || missingSections.length > scriptSectionKeys.length || !missingSections.every((section: unknown) => typeof section === "string" && scriptSectionKeys.includes(section as ScriptSectionKey))) {
+        return NextResponse.json({ error: "Os dados para completar as seções do roteiro são inválidos." }, { status: 400 });
+      }
+      if (!Array.isArray(existingOutputs) || existingOutputs.length === 0 || existingOutputs.length > 12 || !existingOutputs.every(isOutputShape)) {
+        return NextResponse.json({ error: "O roteiro existente não tem uma estrutura válida para completar." }, { status: 400 });
+      }
+      const existingTextLength = (existingOutputs as OutputShape[]).reduce((total, output) => total + output.title.length + output.content.length, 0);
+      if (existingTextLength > 60_000) return NextResponse.json({ error: "O roteiro existente é longo demais para completar." }, { status: 413 });
+
+      const missingLabels = (missingSections as ScriptSectionKey[]).join(", ");
+      const completionPrompt = `Complete somente estas seções ausentes: ${missingLabels}. Não reescreva, repita nem altere as seções já existentes. Preserve o tema e a duração. Para CTA, produza uma chamada adequada e ética, sem prometer resultados jurídicos.\n\nFORMATO: ${format}\nASSUNTO: ${topic.trim()}\nOBJETIVO/PALAVRA-CHAVE: ${typeof goal === "string" ? goal : "não especificado"}\nDURAÇÃO: ${typeof duration === "string" ? duration : "10 minutos"}\n\nSEÇÕES JÁ GERADAS (apenas contexto; não as repita):\n${JSON.stringify(existingOutputs)}\n\nRetorne JSON válido no formato {"outputs":[{"title":"Nome da seção ausente","content":"Texto gerado para essa seção"}]}. Gere somente as seções pedidas.`;
+      const completion = await openai.responses.create({
+        model: "gpt-4.1-mini",
+        instructions: `${baseInstructions}\nComplete apenas as seções explicitamente pedidas pelo usuário desta chamada. Não devolva as seções que já foram fornecidas como contexto.`,
+        input: completionPrompt,
+      });
+      const echoedRequests = new Set([completionPrompt, topic.trim()].map(normalizeGeneratedText));
+      const completedOutputs = parseOutputs(completion.output_text, echoedRequests);
+      if (completedOutputs.length === 0) return NextResponse.json({ error: "A IA não conseguiu completar as seções ausentes." }, { status: 502 });
+      return NextResponse.json({ outputs: completedOutputs });
+    }
+
+    if (mode !== undefined) return NextResponse.json({ error: "Modo de geração inválido." }, { status: 400 });
+
+    const basePrompt = promptFor(format, topic.trim(), typeof goal === "string" ? goal : "", typeof duration === "string" ? duration : "10 minutos", typeof transcript === "string" ? transcript : "");
+    const scriptSectionsInstruction = format === "Roteiro normal" || format === "Roteiro Shorts"
+      ? "\nPara roteiros, inclua blocos distintos para título de trabalho, objetivo e público, gancho de abertura, introdução, desenvolvimento com todas as seções necessárias, conclusão e CTA. O campo content de cada bloco deve conter texto efetivamente gerado; não copie estas instruções ou o pedido do usuário como resultado."
+      : "";
+    const generationPrompt = `${basePrompt}${scriptSectionsInstruction}`;
     const response = await openai.responses.create({
       model: "gpt-4.1-mini",
       instructions: baseInstructions,
-      input: promptFor(format, topic.trim(), typeof goal === "string" ? goal : "", typeof duration === "string" ? duration : "10 minutos", typeof transcript === "string" ? transcript : ""),
+      input: generationPrompt,
     });
-    const raw = response.output_text.trim();
-    const jsonText = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-    let parsed: { outputs?: OutputShape[] };
-    try {
-      parsed = JSON.parse(jsonText);
-    } catch {
-      return NextResponse.json({ error: "A IA retornou um formato inesperado. Tente gerar novamente." }, { status: 502 });
-    }
-    const outputs = Array.isArray(parsed.outputs)
-      ? parsed.outputs.filter((item) => item && typeof item.title === "string" && typeof item.content === "string").slice(0, 12)
-      : [];
+    const echoedRequests = new Set([topic.trim(), generationPrompt].map(normalizeGeneratedText));
+    const outputs = parseOutputs(response.output_text, echoedRequests);
     if (!outputs.length) return NextResponse.json({ error: "A IA não retornou conteúdo utilizável." }, { status: 502 });
     return NextResponse.json({ outputs });
   } catch (error) {
@@ -80,5 +138,3 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Não foi possível gerar conteúdo agora. Verifique a configuração da API e tente novamente." }, { status: 500 });
   }
 }
-
-type OutputShape = { title: string; content: string };
