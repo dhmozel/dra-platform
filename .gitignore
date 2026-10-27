@@ -43,3 +43,6 @@ next-env.d.ts
 # Local secrets
 .env*
 !.env.example
+
+/.backup/
+/temp-repo/

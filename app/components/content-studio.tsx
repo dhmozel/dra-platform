@@ -7,7 +7,7 @@ type Output = { title: string; content: string };
 
 const formats: Format[] = ["YouTube longo", "Reels", "YouTube Shorts", "TikTok", "Stories", "Comunidade WhatsApp", "Carrossel"];
 
-export default function ContentStudio() {
+export default function ContentStudio({ onGenerated }: { onGenerated?: (entry: { title: string; content: string }) => void }) {
   const [format, setFormat] = useState<Format>("YouTube longo");
   const [topic, setTopic] = useState("");
   const [goal, setGoal] = useState("");
@@ -36,6 +36,7 @@ export default function ContentStudio() {
       if (!response.ok) throw new Error(data.error || "Não foi possível gerar o conteúdo.");
       if (!Array.isArray(data.outputs)) throw new Error("A resposta da IA veio em um formato inesperado.");
       setOutputs(data.outputs);
+      for (const output of data.outputs as Output[]) onGenerated?.({ title: output.title, content: output.content });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro inesperado.");
     } finally {

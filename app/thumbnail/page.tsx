@@ -1,6 +1,8 @@
 "use client";
 
 import { ChangeEvent, useEffect, useState } from "react";
+import Image from "next/image";
+import { useLocalHistory } from "../lib/use-local-history";
 
 type StyleType =
   | "Premium"
@@ -10,7 +12,7 @@ type StyleType =
 
 type FormatType = "YouTube" | "Shorts" | "Instagram";
 
-export default function ThumbnailPage() {
+export function ThumbnailGenerator({ onGenerated }: { onGenerated?: (entry: { title: string; content: string; image: string }) => void }) {
   const [description, setDescription] = useState("");
   const [headline, setHeadline] = useState("");
   const [style, setStyle] = useState<StyleType>("Premium");
@@ -23,7 +25,6 @@ export default function ThumbnailPage() {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
 
-  const [credits, setCredits] = useState(20);
 
   useEffect(() => {
     return () => {
@@ -38,6 +39,15 @@ export default function ThumbnailPage() {
 
     const remaining = 4 - images.length;
     const selected = files.slice(0, remaining);
+
+    if (files.some((file) => !["image/png", "image/jpeg", "image/webp"].includes(file.type))) {
+      setError("Use imagens PNG, JPG ou WebP.");
+      return;
+    }
+    if (selected.some((file) => file.size > 3 * 1024 * 1024)) {
+      setError("Cada imagem de referência deve ter no máximo 3 MB.");
+      return;
+    }
 
     const urls = selected.map((file) => URL.createObjectURL(file));
 
@@ -67,26 +77,20 @@ export default function ThumbnailPage() {
       return;
     }
 
-    if (credits <= 0) {
-      setError("Você não possui créditos suficientes.");
-      return;
-    }
-
     setGenerating(true);
     setGenerated(null);
 
     try {
+      const formData = new FormData();
+      formData.set("description", description.trim());
+      formData.set("headline", headline.trim());
+      formData.set("style", style);
+      formData.set("format", format);
+      images.forEach((image) => formData.append("references", image));
+
       const response = await fetch("/api/generate-thumbnail", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          description,
-          headline,
-          style,
-          format,
-        }),
+        body: formData,
       });
 
       const data = await response.json();
@@ -102,7 +106,7 @@ export default function ThumbnailPage() {
       }
 
       setGenerated(data.image);
-      setCredits((prev) => Math.max(0, prev - 1));
+      onGenerated?.({ title: headline.trim(), content: `${description.trim()}\n\nEstilo: ${style}\nFormato: ${format}`, image: data.image });
     } catch (err) {
       console.error(err);
 
@@ -149,7 +153,7 @@ export default function ThumbnailPage() {
         background:
           "radial-gradient(circle at top right, rgba(190,0,0,.10), transparent 30%), #080808",
         color: "#fff",
-        padding: "34px",
+        padding: "clamp(16px, 4vw, 34px)",
         fontFamily:
           "Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif",
       }}
@@ -204,44 +208,13 @@ export default function ThumbnailPage() {
             </p>
           </div>
 
-          <div
-            style={{
-              background: "#111",
-              border: "1px solid #252525",
-              borderRadius: 14,
-              padding: "14px 18px",
-              minWidth: 130,
-              textAlign: "center",
-            }}
-          >
-            <div
-              style={{
-                color: "#888",
-                fontSize: 11,
-                textTransform: "uppercase",
-                letterSpacing: 1,
-              }}
-            >
-              Créditos
-            </div>
-
-            <strong
-              style={{
-                display: "block",
-                fontSize: 24,
-                marginTop: 3,
-              }}
-            >
-              {credits}
-            </strong>
-          </div>
         </div>
 
         {/* GRID PRINCIPAL */}
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "minmax(0, 1fr) 320px",
+            gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
             gap: 24,
             alignItems: "start",
           }}
@@ -435,9 +408,12 @@ export default function ThumbnailPage() {
                         background: "#111",
                       }}
                     >
-                      <img
+                      <Image
                         src={url}
                         alt={`Referência ${index + 1}`}
+                        width={400}
+                        height={250}
+                        unoptimized
                         style={{
                           width: "100%",
                           height: "100%",
@@ -692,45 +668,6 @@ export default function ThumbnailPage() {
               text="Mantenha a identidade visual da DRA em todas as thumbnails."
             />
 
-            <div
-              style={{
-                marginTop: 22,
-                padding: 15,
-                borderRadius: 12,
-                background:
-                  "linear-gradient(135deg, rgba(255,0,0,.10), rgba(255,0,0,.02))",
-                border: "1px solid rgba(255,0,0,.18)",
-              }}
-            >
-              <div
-                style={{
-                  color: "#ff3030",
-                  fontSize: 11,
-                  fontWeight: 800,
-                  marginBottom: 6,
-                }}
-              >
-                SEU PLANO
-              </div>
-
-              <strong
-                style={{
-                  fontSize: 16,
-                }}
-              >
-                DRA Premium
-              </strong>
-
-              <div
-                style={{
-                  color: "#777",
-                  fontSize: 12,
-                  marginTop: 5,
-                }}
-              >
-                {credits} créditos disponíveis
-              </div>
-            </div>
           </aside>
         </div>
 
@@ -802,9 +739,12 @@ export default function ThumbnailPage() {
                 border: "1px solid #222",
               }}
             >
-              <img
+              <Image
                 src={generated}
                 alt="Thumbnail gerada pela IA"
+                width={format === "Shorts" ? 864 : format === "Instagram" ? 1024 : 1536}
+                height={format === "Shorts" ? 1536 : format === "Instagram" ? 1024 : 864}
+                unoptimized
                 style={{
                   display: "block",
                   width: "100%",
@@ -833,8 +773,8 @@ export default function ThumbnailPage() {
               />
 
               <ResultInfo
-                label="Créditos usados"
-                value="1"
+                label="Geração"
+                value="Imagem real da OpenAI"
               />
             </div>
           </section>
@@ -842,6 +782,11 @@ export default function ThumbnailPage() {
       </div>
     </main>
   );
+}
+
+export default function ThumbnailPage() {
+  const history = useLocalHistory();
+  return <ThumbnailGenerator onGenerated={(entry) => { void history.add("Thumbnail", entry.title, entry.content, entry.image); }} />;
 }
 
 function Tip({

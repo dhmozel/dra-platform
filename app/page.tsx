@@ -1,8 +1,14 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ContentStudio from "./components/content-studio";
+import ScriptGenerator from "./components/script-generator";
+import { ThumbnailGenerator } from "./thumbnail/page";
+import { useLocalHistory } from "./lib/use-local-history";
+import ReactMarkdown from "react-markdown";
+import Image from "next/image";
+
 
 type Page =
   | "Início"
@@ -18,13 +24,6 @@ type Page =
 type Message = {
   role: "user" | "assistant";
   text: string;
-};
-
-type RecordItem = {
-  id: string;
-  title: string;
-  category: string;
-  date: string;
 };
 
 const navigation: { name: Page; icon: string }[] = [
@@ -76,7 +75,7 @@ const tools: {
   },
   {
     name: "Histórico",
-    description: "Consulte os registros da sessão",
+    description: "Consulte conteúdos salvos neste dispositivo",
     icon: "◷",
   },
 ];
@@ -90,9 +89,41 @@ export default function Home() {
   const [keyword, setKeyword] = useState("");
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
-  const [records, setRecords] = useState<RecordItem[]>([]);
+  const history = useLocalHistory();
+  const [profileReady, setProfileReady] = useState(false);
+  const [historySearch, setHistorySearch] = useState("");
+  const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
+  const [historyMessage, setHistoryMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    void Promise.resolve().then(() => {
+      try {
+        const savedProfile = localStorage.getItem("dra-profile-v1");
+        if (savedProfile) {
+          const parsed = JSON.parse(savedProfile) as { name?: string; email?: string };
+          if (active && typeof parsed.name === "string") setProfileName(parsed.name);
+          if (active && typeof parsed.email === "string") setEmail(parsed.email);
+        }
+      } catch {
+        // A corrupt profile entry should not prevent the workspace from loading.
+      }
+      if (active) setProfileReady(true);
+    });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (profileReady) {
+      try {
+        localStorage.setItem("dra-profile-v1", JSON.stringify({ name: profileName, email }));
+      } catch {
+        // Profile fields remain editable in memory if browser storage is unavailable.
+      }
+    }
+  }, [email, profileName, profileReady]);
 
   function navigate(next: Page) {
     setPage(next);
@@ -104,15 +135,8 @@ export default function Home() {
     const cleanTitle = title.trim();
     if (!cleanTitle) return;
 
-    setRecords((current) => [
-      {
-        id: `${Date.now()}-${Math.random()}`,
-        title: cleanTitle,
-        category,
-        date: new Date().toLocaleDateString("pt-BR"),
-      },
-      ...current,
-    ]);
+    const historyCategory = category === "Palavra-chave" ? "Palavra-chave" : "Ideia";
+    void history.add(historyCategory, cleanTitle, cleanTitle);
 
     setIdea("");
     setKeyword("");
@@ -127,10 +151,8 @@ export default function Home() {
     setError("");
     setLoading(true);
 
-    setMessages((current) => [
-      ...current,
-      { role: "user", text: question },
-    ]);
+    const conversation = [...messages, { role: "user" as const, text: question }];
+    setMessages(conversation);
 
     try {
       const response = await fetch("/api/chat", {
@@ -138,7 +160,7 @@ export default function Home() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ message: question }),
+        body: JSON.stringify({ messages: conversation }),
       });
 
       const data = await response.json();
@@ -337,7 +359,7 @@ export default function Home() {
 
               <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 {[
-                  { label: "Itens salvos na sessão", value: records.length },
+                  { label: "Itens salvos neste dispositivo", value: history.records.length },
                   {
                     label: "Mensagens enviadas",
                     value: messages.filter((m) => m.role === "user").length,
@@ -356,35 +378,19 @@ export default function Home() {
             </div>
           )}
 
-          {(page === "Thumbnail" ||
-            page === "Conteúdo" ||
-            page === "Roteiro") && (
+          {page === "Thumbnail" && <ThumbnailGenerator onGenerated={(entry) => { void history.add("Thumbnail", entry.title, entry.content, entry.image); }} />}
+
+          {page === "Conteúdo" && (
             <section className="mx-auto max-w-3xl">
               <Heading
-                eyebrow={
-                  page === "Thumbnail"
-                    ? "Criação visual"
-                    : page === "Conteúdo"
-                      ? "Planejamento"
-                      : "Produção"
-                }
+                eyebrow="Planejamento"
                 title={page}
-                description={
-                  page === "Thumbnail"
-                    ? "Registre ideias para suas capas e peças visuais."
-                    : page === "Conteúdo"
-                      ? "Organize ideias para suas próximas publicações."
-                      : "Planeje o tema e a estrutura do próximo vídeo."
-                }
+                description="Organize ideias para suas próximas publicações."
               />
 
               <div className="mt-8 rounded-2xl border border-white/10 bg-[#0e0e0e] p-5 sm:p-8">
                 <label className="text-sm font-medium">
-                  {page === "Thumbnail"
-                    ? "Ideia da capa"
-                    : page === "Conteúdo"
-                      ? "Ideia da publicação"
-                      : "Tema do roteiro"}
+                  Ideia da publicação
                 </label>
 
                 <textarea
@@ -402,15 +408,16 @@ export default function Home() {
                 </button>
 
                 <p className="mt-4 text-xs leading-5 text-white/35">
-                  Esta versão salva ideias no histórico da sessão. A
-                  geração automática de imagens e a publicação de conteúdo
-                  ainda precisam ser integradas.
+                  As ideias ficam salvas localmente neste dispositivo. Você pode
+                  encontrá-las no histórico da plataforma.
                 </p>
               </div>
             </section>
           )}
 
-          {page === "Estúdio de Conteúdo" && <ContentStudio />}
+          {page === "Estúdio de Conteúdo" && <ContentStudio onGenerated={(entry) => { void history.add("Conteúdo", entry.title, entry.content); }} />}
+
+          {page === "Roteiro" && <ScriptGenerator onGenerated={(entry) => { void history.add("Roteiro", entry.title, entry.content); }} />}
 
           {page === "DRA IA" && (
             <section className="mx-auto flex min-h-[65vh] max-w-4xl flex-col">
@@ -421,7 +428,7 @@ export default function Home() {
               />
 
               <div className="mt-7 flex flex-1 flex-col overflow-hidden rounded-2xl border border-white/10 bg-[#0d0d0d]">
-                <div className="flex items-center gap-3 border-b border-white/10 p-4 sm:p-5">
+                <div className="flex flex-wrap items-center gap-3 border-b border-white/10 p-4 sm:p-5">
                   <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-red-500/10 text-lg text-red-400">
                     ✦
                   </span>
@@ -431,6 +438,9 @@ export default function Home() {
                       {loading ? "Preparando resposta..." : "Chat com IA"}
                     </p>
                   </div>
+                  <button type="button" onClick={() => { setMessages([]); setPrompt(""); setError(""); }} disabled={loading || messages.length === 0} className="rounded-lg border border-white/15 px-3 py-2 text-xs font-semibold text-white/70 hover:border-red-500/60 disabled:cursor-not-allowed disabled:opacity-40">
+                    Nova conversa
+                  </button>
                 </div>
 
                 <div className="flex min-h-[280px] flex-1 flex-col gap-4 overflow-y-auto p-4 sm:p-6">
@@ -450,13 +460,44 @@ export default function Home() {
                   {messages.map((message, index) => (
                     <div
                       key={`${index}-${message.role}`}
-                      className={`max-w-[92%] whitespace-pre-wrap break-words rounded-2xl p-4 text-sm leading-6 sm:max-w-[80%] ${
+                      className={`max-w-[92%] break-words rounded-2xl p-4 text-sm leading-6 sm:max-w-[80%] ${
                         message.role === "user"
-                          ? "ml-auto bg-red-600 text-white"
+                          ? "ml-auto whitespace-pre-wrap bg-red-600 text-white"
                           : "border border-white/10 bg-white/[.04] text-white/80"
                       }`}
                     >
-                      {message.text}
+                      {message.role === "user" ? (
+  <div className="whitespace-pre-wrap">{message.text}</div>
+) : (
+  <ReactMarkdown
+
+  components={{
+    h1: ({ children }) => (
+      <h1 className="mb-4 mt-5 text-2xl font-bold">{children}</h1>
+    ),
+    h2: ({ children }) => (
+      <h2 className="mb-3 mt-4 text-xl font-bold">{children}</h2>
+    ),
+    h3: ({ children }) => (
+      <h3 className="mb-2 mt-3 text-lg font-bold">{children}</h3>
+    ),
+    p: ({ children }) => (
+      <p className="mb-3 leading-7">{children}</p>
+    ),
+    strong: ({ children }) => (
+      <strong className="font-bold text-white">{children}</strong>
+    ),
+    ul: ({ children }) => (
+      <ul className="mb-3 list-disc space-y-1 pl-6">{children}</ul>
+    ),
+    ol: ({ children }) => (
+      <ol className="mb-3 list-decimal space-y-1 pl-6">{children}</ol>
+    ),
+  }}
+>
+  {String(message.text ?? "")}
+</ReactMarkdown>
+)}
                     </div>
                   ))}
 
@@ -554,19 +595,27 @@ export default function Home() {
               <Heading
                 eyebrow="Registros"
                 title="Histórico"
-                description="Consulte as ideias salvas durante esta sessão."
+                description="Roteiros, conteúdos, thumbnails e ideias salvos localmente neste dispositivo."
               />
 
-              <div className="mt-8 space-y-3">
-                {records.length === 0 ? (
+              <div className="mt-7">
+                <input value={historySearch} onChange={(event) => setHistorySearch(event.target.value)} placeholder="Pesquisar por título, categoria ou conteúdo..." className="w-full rounded-xl border border-white/10 bg-[#0e0e0e] px-4 py-3 text-sm outline-none placeholder:text-white/30 focus:border-red-500/60" />
+                <p className="mt-3 text-xs leading-5 text-white/35">Este histórico existe apenas neste navegador e dispositivo. Ele não é sincronizado entre usuários.</p>
+                {(history.error || historyMessage) && <p role="status" className="mt-3 text-sm text-amber-200">{historyMessage || history.error}</p>}
+              </div>
+
+              <div className="mt-5 space-y-3">
+                {!history.ready ? (
+                  <div className="rounded-2xl border border-white/10 bg-[#0e0e0e] p-8 text-center text-sm text-white/50">Carregando histórico local...</div>
+                ) : history.records.filter((record) => `${record.title} ${record.category} ${record.content}`.toLocaleLowerCase("pt-BR").includes(historySearch.toLocaleLowerCase("pt-BR").trim())).length === 0 ? (
                   <div className="rounded-2xl border border-white/10 bg-[#0e0e0e] p-8 text-center">
-                    <p className="font-semibold">Seu histórico está vazio.</p>
+                    <p className="font-semibold">{history.records.length ? "Nenhum resultado encontrado." : "Seu histórico está vazio."}</p>
                     <p className="mt-2 text-sm text-white/40">
-                      Salve uma ideia em qualquer ferramenta para vê-la aqui.
+                      Gere um roteiro, conteúdo ou thumbnail para salvá-lo aqui.
                     </p>
                   </div>
                 ) : (
-                  records.map((record) => (
+                  history.records.filter((record) => `${record.title} ${record.category} ${record.content}`.toLocaleLowerCase("pt-BR").includes(historySearch.toLocaleLowerCase("pt-BR").trim())).map((record) => (
                     <article
                       key={record.id}
                       className="rounded-2xl border border-white/10 bg-[#0e0e0e] p-5"
@@ -576,12 +625,20 @@ export default function Home() {
                           {record.category}
                         </span>
                         <span className="text-xs text-white/35">
-                          {record.date}
+                          {new Date(record.createdAt).toLocaleString("pt-BR")}
                         </span>
                       </div>
                       <p className="mt-4 whitespace-pre-wrap break-words text-sm leading-6 text-white/75">
                         {record.title}
                       </p>
+                      {record.image && <Image src={record.image} alt={`Thumbnail: ${record.title}`} width={1536} height={864} unoptimized className="mt-4 max-h-72 w-full rounded-xl border border-white/10 object-contain" />}
+                      {selectedRecordId === record.id && <pre className="mt-4 max-h-[32rem] overflow-auto whitespace-pre-wrap break-words rounded-xl border border-white/10 bg-black/50 p-4 font-sans text-sm leading-6 text-white/70">{record.content}</pre>}
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <button onClick={() => setSelectedRecordId(selectedRecordId === record.id ? null : record.id)} className="rounded-lg border border-white/15 px-3 py-2 text-xs font-semibold hover:border-red-500/60">{selectedRecordId === record.id ? "Fechar visualização" : "Visualizar"}</button>
+                        <button onClick={() => void navigator.clipboard.writeText(record.content).then(() => setHistoryMessage("Conteúdo copiado.")).catch(() => setHistoryMessage("Não foi possível copiar neste navegador."))} className="rounded-lg border border-white/15 px-3 py-2 text-xs font-semibold hover:border-red-500/60">Copiar</button>
+                        <button onClick={() => void history.toggleFavorite(record.id)} className="rounded-lg border border-white/15 px-3 py-2 text-xs font-semibold hover:border-red-500/60">{record.favorite ? "★ Favorito" : "☆ Favoritar"}</button>
+                        <button onClick={() => void history.remove(record.id)} className="rounded-lg border border-red-500/25 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/10">Excluir</button>
+                      </div>
                     </article>
                   ))
                 )}
@@ -594,7 +651,7 @@ export default function Home() {
               <Heading
                 eyebrow="Configurações"
                 title="Meu Perfil"
-                description="Edite as informações exibidas nesta interface."
+                description="Edite seus dados locais e acompanhe estatísticas dos itens salvos neste dispositivo."
               />
 
               <div className="mt-8 space-y-5 rounded-2xl border border-white/10 bg-[#0e0e0e] p-5 sm:p-8">
@@ -618,10 +675,17 @@ export default function Home() {
                   />
                 </div>
 
-                <p className="text-xs leading-5 text-white/35">
-                  As alterações de perfil existem apenas nesta sessão.
-                  Login e armazenamento permanente ainda não estão configurados.
-                </p>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {[
+                    { label: "Itens salvos", value: history.records.length },
+                    { label: "Favoritos", value: history.records.filter((record) => record.favorite).length },
+                    { label: "Mensagens enviadas à Dra.IA nesta sessão", value: messages.filter((message) => message.role === "user").length },
+                  ].map((stat) => <div key={stat.label} className="rounded-xl border border-white/10 bg-black/40 p-4"><p className="text-xs text-white/45">{stat.label}</p><p className="mt-2 text-2xl font-black">{stat.value}</p></div>)}
+                </div>
+                <div className="rounded-xl border border-white/10 bg-black/40 p-4">
+                  <p className="font-semibold">Conta e plano</p>
+                  <p className="mt-2 text-sm leading-6 text-white/50">Não há login, assinatura ou saldo de créditos conectados a esta plataforma. Nome, e-mail e histórico são mantidos localmente neste navegador.</p>
+                </div>
               </div>
             </section>
           )}
