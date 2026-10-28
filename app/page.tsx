@@ -415,7 +415,7 @@ export default function Home() {
             </section>
           )}
 
-          {page === "Estúdio de Conteúdo" && <ContentStudio onGenerated={(entry) => { void history.add("Conteúdo", entry.title, entry.content); }} />}
+          {page === "Estúdio de Conteúdo" && <ContentStudio onGenerated={(entry) => history.add(entry.category ?? "Conteúdo", entry.title, entry.content)} />}
 
           {page === "Roteiro" && <ScriptGenerator onGenerated={(entry) => { void history.add("Roteiro", entry.title, entry.content); }} />}
 

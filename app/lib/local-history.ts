@@ -1,6 +1,6 @@
 export type HistoryRecord = {
   id: string;
-  category: "Conteúdo" | "Roteiro" | "Thumbnail" | "Ideia" | "Palavra-chave";
+  category: "Conteúdo" | "Títulos e Legendas" | "Roteiro" | "Thumbnail" | "Ideia" | "Palavra-chave";
   title: string;
   content: string;
   image?: string;
