@@ -41,6 +41,20 @@ function normalizeGeneratedText(value: string) {
 
 type ScriptSectionKey = "title" | "objective" | "hook" | "introduction" | "development" | "conclusion" | "cta";
 type OutputShape = { title: string; content: string };
+type TitleCaptionOptions = {
+  audience: string;
+  objective: "engajamento" | "autoridade" | "educação" | "alcance" | "conversão";
+  platform: "Instagram" | "Reels" | "Stories" | "LinkedIn";
+  tone: "profissional" | "educativo" | "persuasivo" | "descontraído";
+  titleCount: number;
+  captionLength: "curto" | "médio" | "longo";
+  additionalContext: string;
+};
+
+const titleCaptionObjectives = ["engajamento", "autoridade", "educação", "alcance", "conversão"] as const;
+const titleCaptionPlatforms = ["Instagram", "Reels", "Stories", "LinkedIn"] as const;
+const titleCaptionTones = ["profissional", "educativo", "persuasivo", "descontraído"] as const;
+const titleCaptionLengths = ["curto", "médio", "longo"] as const;
 
 const scriptSectionKeys: ScriptSectionKey[] = ["title", "objective", "hook", "introduction", "development", "conclusion", "cta"];
 
@@ -65,17 +79,86 @@ function parseOutputs(raw: string, echoedRequests: Set<string>): OutputShape[] {
     .slice(0, 12);
 }
 
+function isTitleCaptionOptions(value: unknown): value is TitleCaptionOptions {
+  if (!value || typeof value !== "object") return false;
+  const options = value as Record<string, unknown>;
+  return (
+    typeof options.audience === "string" && options.audience.trim().length > 0 && options.audience.length <= 300 &&
+    typeof options.objective === "string" && titleCaptionObjectives.includes(options.objective as TitleCaptionOptions["objective"]) &&
+    typeof options.platform === "string" && titleCaptionPlatforms.includes(options.platform as TitleCaptionOptions["platform"]) &&
+    typeof options.tone === "string" && titleCaptionTones.includes(options.tone as TitleCaptionOptions["tone"]) &&
+    typeof options.titleCount === "number" && Number.isInteger(options.titleCount) && options.titleCount >= 2 && options.titleCount <= 10 &&
+    typeof options.captionLength === "string" && titleCaptionLengths.includes(options.captionLength as TitleCaptionOptions["captionLength"]) &&
+    typeof options.additionalContext === "string" && options.additionalContext.length <= 5000
+  );
+}
+
+function promptForTitleCaption(topic: string, options: TitleCaptionOptions) {
+  return `
+Crie um pacote de títulos e legenda para a D R A · Daniela Rigol Advocacia.
+
+TEMA: ${topic}
+PÚBLICO-ALVO: ${options.audience}
+OBJETIVO: ${options.objective}
+PLATAFORMA: ${options.platform}
+TOM: ${options.tone}
+TAMANHO DA LEGENDA: ${options.captionLength}
+CONTEXTO ADICIONAL: ${options.additionalContext || "Não fornecido."}
+
+Gere exatamente ${options.titleCount} opções de título, distintas entre si e coerentes com o tema, o público, o objetivo e a plataforma. Evite promessas, garantias, sensacionalismo, caixa alta excessiva e títulos repetidos com pequenas variações.
+Escreva uma legenda com abertura atrativa, desenvolvimento claro e chamada para ação adequada ao objetivo e à plataforma. Respeite o tamanho solicitado sem perder clareza.
+Gere hashtags relacionadas ao tema, ao público e à plataforma, sem hashtags genéricas ou alegações de alcance garantido.
+Use português brasileiro e a linguagem acessível, responsável e profissional da Dra. Daniela Rigol. Não invente fatos, estatísticas, leis, decisões, fontes ou requisitos. Não prometa resultados jurídicos. Se o tema exigir confirmação jurídica, use [REVISÃO JURÍDICA NECESSÁRIA] junto à afirmação que precisa de validação. Use somente informações fornecidas no tema/contexto.
+
+Retorne JSON válido com a chave "outputs". Cada título deve ser um bloco separado chamado "Título 1", "Título 2" e assim sucessivamente. Inclua exatamente um bloco chamado "Legenda" e um chamado "Hashtags". O campo content de cada bloco deve conter somente o texto daquele item, sem copiar estas instruções. Formato:
+{"outputs":[{"title":"Título 1","content":"..."},{"title":"Legenda","content":"Abertura...\\n\\nDesenvolvimento...\\n\\nCTA..."},{"title":"Hashtags","content":"#... #..."}]}
+`;
+}
+
+function titleCaptionOutputFormat(options: TitleCaptionOptions) {
+  const titleLabels = Array.from({ length: options.titleCount }, (_, index) => `Título ${index + 1}`);
+  return {
+    type: "json_schema" as const,
+    name: "dra_titles_legendas",
+    strict: true,
+    schema: {
+      type: "object",
+      properties: {
+        outputs: {
+          type: "array",
+          minItems: options.titleCount + 2,
+          maxItems: options.titleCount + 2,
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string", enum: [...titleLabels, "Legenda", "Hashtags"] },
+              content: { type: "string" },
+            },
+            required: ["title", "content"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["outputs"],
+      additionalProperties: false,
+    },
+  };
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { format, topic, goal, duration, transcript, mode, missingSections, existingOutputs } = body ?? {};
-    const allowed = ["YouTube longo", "Roteiro normal", "Roteiro Shorts", "Reels", "YouTube Shorts", "TikTok", "Stories", "Comunidade WhatsApp", "Carrossel"];
+    const { format, topic, goal, duration, transcript, mode, missingSections, existingOutputs, titleCaption } = body ?? {};
+    const allowed = ["YouTube longo", "Roteiro normal", "Roteiro Shorts", "Reels", "YouTube Shorts", "TikTok", "Stories", "Comunidade WhatsApp", "Carrossel", "Títulos e Legendas"];
 
     if (typeof format !== "string" || !allowed.includes(format)) {
       return NextResponse.json({ error: "Escolha um formato válido." }, { status: 400 });
     }
     if (typeof topic !== "string" || !topic.trim() || topic.length > 5000) {
       return NextResponse.json({ error: "Informe um assunto de até 5.000 caracteres." }, { status: 400 });
+    }
+    if (format === "Títulos e Legendas" && !isTitleCaptionOptions(titleCaption)) {
+      return NextResponse.json({ error: "Revise público, objetivo, plataforma, tom, quantidade de títulos e tamanho da legenda." }, { status: 400 });
     }
     const durations = ["1 minuto", "1 minuto e 30 segundos", "3 minutos", "5 minutos", "10 minutos", "15 minutos"];
     if (duration !== undefined && (typeof duration !== "string" || !durations.includes(duration))) {
@@ -114,7 +197,9 @@ export async function POST(request: Request) {
 
     if (mode !== undefined) return NextResponse.json({ error: "Modo de geração inválido." }, { status: 400 });
 
-    const basePrompt = promptFor(format, topic.trim(), typeof goal === "string" ? goal : "", typeof duration === "string" ? duration : "10 minutos", typeof transcript === "string" ? transcript : "");
+    const basePrompt = format === "Títulos e Legendas"
+      ? promptForTitleCaption(topic.trim(), titleCaption as TitleCaptionOptions)
+      : promptFor(format, topic.trim(), typeof goal === "string" ? goal : "", typeof duration === "string" ? duration : "10 minutos", typeof transcript === "string" ? transcript : "");
     const scriptSectionsInstruction = format === "Roteiro normal" || format === "Roteiro Shorts"
       ? "\nPara roteiros, inclua blocos distintos para título de trabalho, objetivo e público, gancho de abertura, introdução, desenvolvimento com todas as seções necessárias, conclusão e CTA. O campo content de cada bloco deve conter texto efetivamente gerado; não copie estas instruções ou o pedido do usuário como resultado."
       : "";
@@ -123,6 +208,9 @@ export async function POST(request: Request) {
       model: "gpt-4.1-mini",
       instructions: baseInstructions,
       input: generationPrompt,
+      ...(format === "Títulos e Legendas" && isTitleCaptionOptions(titleCaption)
+        ? { text: { format: titleCaptionOutputFormat(titleCaption) } }
+        : {}),
     });
     const echoedRequests = new Set([topic.trim(), generationPrompt].map(normalizeGeneratedText));
     const outputs = parseOutputs(response.output_text, echoedRequests);

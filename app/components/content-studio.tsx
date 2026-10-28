@@ -1,13 +1,17 @@
  "use client";
 
 import { useState } from "react";
+import TitleCaptionGenerator from "./title-caption-generator";
+import type { HistoryRecord } from "../lib/local-history";
 
 type Format = "YouTube longo" | "Reels" | "YouTube Shorts" | "TikTok" | "Stories" | "Comunidade WhatsApp" | "Carrossel";
 type Output = { title: string; content: string };
+export type ContentStudioEntry = { title: string; content: string; category?: HistoryRecord["category"] };
 
 const formats: Format[] = ["YouTube longo", "Reels", "YouTube Shorts", "TikTok", "Stories", "Comunidade WhatsApp", "Carrossel"];
 
-export default function ContentStudio({ onGenerated }: { onGenerated?: (entry: { title: string; content: string }) => void }) {
+export default function ContentStudio({ onGenerated }: { onGenerated?: (entry: ContentStudioEntry) => void | boolean | Promise<void | boolean> }) {
+  const [activeArea, setActiveArea] = useState<"content" | "titles">("content");
   const [format, setFormat] = useState<Format>("YouTube longo");
   const [topic, setTopic] = useState("");
   const [goal, setGoal] = useState("");
@@ -65,6 +69,18 @@ export default function ContentStudio({ onGenerated }: { onGenerated?: (entry: {
         </p>
       </div>
 
+      <div role="tablist" aria-label="Ferramentas do Estúdio de Conteúdo" className="mb-6 flex flex-wrap gap-2 rounded-xl border border-white/10 bg-[#0d0d0d] p-2">
+        <button type="button" role="tab" aria-selected={activeArea === "content"} onClick={() => setActiveArea("content")}
+          className={`rounded-lg px-4 py-2.5 text-sm font-semibold transition ${activeArea === "content" ? "bg-red-600 text-white" : "text-white/60 hover:bg-white/5 hover:text-white"}`}>
+          Gerador de conteúdo
+        </button>
+        <button type="button" role="tab" aria-selected={activeArea === "titles"} onClick={() => setActiveArea("titles")}
+          className={`rounded-lg px-4 py-2.5 text-sm font-semibold transition ${activeArea === "titles" ? "bg-red-600 text-white" : "text-white/60 hover:bg-white/5 hover:text-white"}`}>
+          Títulos e Legendas
+        </button>
+      </div>
+
+      {activeArea === "titles" ? <TitleCaptionGenerator onGenerated={onGenerated} /> : <>
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
         <div className="space-y-5 rounded-2xl border border-white/10 bg-[#0d0d0d] p-5 sm:p-7">
           <div>
@@ -143,6 +159,7 @@ export default function ContentStudio({ onGenerated }: { onGenerated?: (entry: {
           <pre className="mt-4 whitespace-pre-wrap break-words font-sans text-sm leading-6 text-white/75">{item.content}</pre>
         </article>)}
       </div>}
+      </>}
     </section>
   );
 }
