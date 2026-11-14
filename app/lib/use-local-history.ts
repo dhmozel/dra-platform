@@ -34,7 +34,7 @@ export function useLocalHistory() {
     return () => { active = false; };
   }, []);
 
-  const add = useCallback(async (category: HistoryRecord["category"], title: string, content: string, image?: string) => {
+  const addRecord = useCallback(async (category: HistoryRecord["category"], title: string, content: string, image?: string): Promise<string | null> => {
     const record: HistoryRecord = {
       id: crypto.randomUUID(),
       category,
@@ -48,9 +48,25 @@ export function useLocalHistory() {
       await saveHistory(record);
       setRecords((current) => [record, ...current]);
       setError("");
-      return true;
+      return record.id;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Não foi possível salvar no dispositivo.");
+      return null;
+    }
+  }, []);
+
+  const add = useCallback(async (category: HistoryRecord["category"], title: string, content: string, image?: string) => {
+    return !!(await addRecord(category, title, content, image));
+  }, [addRecord]);
+
+  const updateRecord = useCallback(async (id: string, update: Pick<HistoryRecord, "title" | "content">) => {
+    try {
+      await updateHistory(id, update);
+      setRecords((current) => current.map((item) => item.id === id ? { ...item, ...update } : item));
+      setError("");
+      return true;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Não foi possível atualizar o registro local.");
       return false;
     }
   }, []);
@@ -77,5 +93,5 @@ export function useLocalHistory() {
     }
   }, []);
 
-  return { records, ready, error, add, toggleFavorite, remove, reload };
+  return { records, ready, error, add, addRecord, updateRecord, toggleFavorite, remove, reload };
 }

@@ -1,10 +1,11 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ContentStudio from "./components/content-studio";
+import CarouselStudio from "./components/carousel-studio";
 import ScriptGenerator from "./components/script-generator";
-import { ThumbnailGenerator } from "./thumbnail/page";
+import { ThumbnailGenerator } from "./components/thumbnail-generator";
 import { useLocalHistory } from "./lib/use-local-history";
 import ReactMarkdown from "react-markdown";
 import Image from "next/image";
@@ -13,6 +14,7 @@ import Image from "next/image";
 type Page =
   | "Início"
   | "Thumbnail"
+  | "Carrosséis"
   | "Estúdio de Conteúdo"
   | "Conteúdo"
   | "Roteiro"
@@ -29,6 +31,7 @@ type Message = {
 const navigation: { name: Page; icon: string }[] = [
   { name: "Início", icon: "⌂" },
   { name: "Thumbnail", icon: "▧" },
+  { name: "Carrosséis", icon: "▦" },
   { name: "Estúdio de Conteúdo", icon: "✦" },
   { name: "Conteúdo", icon: "✎" },
   { name: "Roteiro", icon: "▤" },
@@ -47,6 +50,11 @@ const tools: {
     name: "Thumbnail",
     description: "Planeje capas profissionais",
     icon: "▧",
+  },
+  {
+    name: "Carrosséis",
+    description: "Crie, edite e exporte carrosséis para redes sociais",
+    icon: "▦",
   },
   {
     name: "Estúdio de Conteúdo",
@@ -90,6 +98,8 @@ export default function Home() {
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const history = useLocalHistory();
+  const { addRecord: addHistoryRecord, updateRecord: updateHistoryRecord, remove: removeHistoryRecord } = history;
+  const carouselFlush = useRef<(() => Promise<boolean>) | null>(null);
   const [profileReady, setProfileReady] = useState(false);
   const [historySearch, setHistorySearch] = useState("");
   const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
@@ -125,7 +135,8 @@ export default function Home() {
     }
   }, [email, profileName, profileReady]);
 
-  function navigate(next: Page) {
+  async function navigate(next: Page) {
+    if (page === "Carrosséis" && carouselFlush.current && !(await carouselFlush.current())) return;
     setPage(next);
     setMenuOpen(false);
     setError("");
@@ -141,6 +152,24 @@ export default function Home() {
     setIdea("");
     setKeyword("");
   }
+
+  const saveCarousel = useCallback(async (id: string | null, title: string, content: string) => {
+    if (id) {
+      return await updateHistoryRecord(id, { title, content }) ? id : null;
+    }
+    return addHistoryRecord("Carrossel", title, content);
+  }, [addHistoryRecord, updateHistoryRecord]);
+
+  const deleteCarousel = useCallback(async (id: string) => {
+    await removeHistoryRecord(id);
+  }, [removeHistoryRecord]);
+
+  const registerCarouselFlush = useCallback((flush: () => Promise<boolean>) => {
+    carouselFlush.current = flush;
+    return () => {
+      if (carouselFlush.current === flush) carouselFlush.current = null;
+    };
+  }, []);
 
   async function sendMessage() {
     const question = prompt.trim();
@@ -380,6 +409,8 @@ export default function Home() {
 
           {page === "Thumbnail" && <ThumbnailGenerator onGenerated={(entry) => { void history.add("Thumbnail", entry.title, entry.content, entry.image); }} />}
 
+          {page === "Carrosséis" && <CarouselStudio projects={history.records.filter((record) => record.category === "Carrossel")} onSave={saveCarousel} onDeleteProject={deleteCarousel} onRegisterFlush={registerCarouselFlush} storageError={history.error} />}
+
           {page === "Conteúdo" && (
             <section className="mx-auto max-w-3xl">
               <Heading
@@ -595,7 +626,7 @@ export default function Home() {
               <Heading
                 eyebrow="Registros"
                 title="Histórico"
-                description="Roteiros, conteúdos, thumbnails e ideias salvos localmente neste dispositivo."
+                description="Roteiros, conteúdos, thumbnails, carrosséis e ideias salvos localmente neste dispositivo."
               />
 
               <div className="mt-7">

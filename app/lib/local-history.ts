@@ -1,6 +1,6 @@
 export type HistoryRecord = {
   id: string;
-  category: "Conteúdo" | "Títulos e Legendas" | "Roteiro" | "Thumbnail" | "Ideia" | "Palavra-chave";
+  category: "Conteúdo" | "Títulos e Legendas" | "Roteiro" | "Thumbnail" | "Carrossel" | "Ideia" | "Palavra-chave";
   title: string;
   content: string;
   image?: string;
@@ -58,7 +58,7 @@ export async function saveHistory(record: HistoryRecord): Promise<void> {
   await writeRecord(record);
 }
 
-export async function updateHistory(id: string, update: Partial<Pick<HistoryRecord, "favorite">>): Promise<void> {
+export async function updateHistory(id: string, update: Partial<Pick<HistoryRecord, "favorite" | "title" | "content">>): Promise<void> {
   const database = await openDatabase();
   try {
     await new Promise<void>((resolve, reject) => {

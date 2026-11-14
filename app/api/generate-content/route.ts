@@ -43,6 +43,19 @@ function normalizeGeneratedText(value: string) {
 
 type ScriptSectionKey = "title" | "objective" | "hook" | "introduction" | "development" | "conclusion" | "cta";
 type OutputShape = { title: string; content: string };
+type CarouselAspect = "4:5" | "1:1";
+type CarouselConfig = {
+  objective: string;
+  audience: string;
+  slideCount: number;
+  tone: string;
+  aspectRatio: CarouselAspect;
+  designMode: "template" | "custom";
+  template: string;
+  palette: { background: string; primary: string; accent: string; text: string; muted: string };
+};
+type CarouselSlide = { title: string; text: string; visual: string; composition: string };
+type CarouselDesign = CarouselConfig["palette"] & { style: string; typography: string; composition: string };
 type TitleCaptionOptions = {
   audience: string;
   objective: "engajamento" | "autoridade" | "educação" | "alcance" | "conversão";
@@ -59,6 +72,8 @@ const titleCaptionTones = ["profissional", "educativo", "persuasivo", "descontra
 const titleCaptionLengths = ["curto", "médio", "longo"] as const;
 
 const scriptSectionKeys: ScriptSectionKey[] = ["title", "objective", "hook", "introduction", "development", "conclusion", "cta"];
+const carouselTemplates = ["dra-premium", "editorial-claro", "contraste-moderno", "acolhedor"] as const;
+const carouselTones = ["profissional", "educativo", "acolhedor", "direto", "formal"] as const;
 
 const ethicalViolationPatterns = [
   /\b(?:resultado|vitoria|aprovacao|direito|indenizacao|restituicao)\b.{0,40}\b(?:garantido|garantida|certo|certa|assegurado|assegurada)\b/i,
@@ -141,6 +156,96 @@ function parseOutputs(raw: string, echoedRequests: Set<string>): OutputShape[] {
     .slice(0, 12);
 }
 
+function isHexColor(value: unknown): value is string {
+  return typeof value === "string" && /^#[\da-f]{6}$/i.test(value);
+}
+
+function isCarouselConfig(value: unknown): value is CarouselConfig {
+  if (!value || typeof value !== "object") return false;
+  const config = value as Record<string, unknown>;
+  const palette = config.palette;
+  return typeof config.objective === "string" && config.objective.trim().length > 0 && config.objective.length <= 1000 &&
+    typeof config.audience === "string" && config.audience.trim().length > 0 && config.audience.length <= 1000 &&
+    typeof config.slideCount === "number" && Number.isInteger(config.slideCount) && config.slideCount >= 5 && config.slideCount <= 20 &&
+    typeof config.tone === "string" && carouselTones.includes(config.tone as (typeof carouselTones)[number]) &&
+    (config.aspectRatio === "4:5" || config.aspectRatio === "1:1") &&
+    (config.designMode === "template" || config.designMode === "custom") &&
+    typeof config.template === "string" && carouselTemplates.includes(config.template as (typeof carouselTemplates)[number]) &&
+    !!palette && typeof palette === "object" &&
+    ["background", "primary", "accent", "text", "muted"].every((key) => isHexColor((palette as Record<string, unknown>)[key]));
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> | null {
+  const jsonText = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  try {
+    const parsed: unknown = JSON.parse(jsonText);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseCarouselSlide(value: unknown): CarouselSlide | null {
+  if (!value || typeof value !== "object") return null;
+  const slide = value as Record<string, unknown>;
+  if (["title", "text", "visual", "composition"].some((key) =>
+    typeof slide[key] !== "string" || !(slide[key] as string).trim() || (slide[key] as string).length > 1600
+  )) return null;
+  return {
+    title: (slide.title as string).trim(),
+    text: (slide.text as string).trim(),
+    visual: (slide.visual as string).trim(),
+    composition: (slide.composition as string).trim(),
+  };
+}
+
+function parseCarouselSlides(value: unknown, count: number): CarouselSlide[] | null {
+  if (!Array.isArray(value) || value.length !== count) return null;
+  const slides = value.map(parseCarouselSlide);
+  return slides.every((slide): slide is CarouselSlide => slide !== null) ? slides : null;
+}
+
+const carouselInstructions = `${baseInstructions}
+
+PADRÃO ESPECÍFICO PARA CARROSSÉIS:
+- Crie conteúdo educativo, claro e responsável. Não prometa resultados nem induza contratação por medo, urgência artificial ou pressão.
+- Não invente leis, artigos, decisões, requisitos, estatísticas, números ou fatos jurídicos. Use somente fatos presentes no tema/contexto; marque afirmações jurídicas incertas com [REVISÃO JURÍDICA NECESSÁRIA].
+- Evite aconselhamento jurídico individual. Explique conceitos de forma geral e condicional.
+- Escreva textos curtos, adequados para leitura em slides de rede social, e mantenha transições e identidade visual coerentes.
+- Nunca inclua nomes, processos ou dados identificáveis de clientes.`;
+
+function carouselGenerationPrompt(topic: string, config: CarouselConfig) {
+  return `Crie um carrossel completo de ${config.slideCount} slides para Instagram.
+TEMA: ${topic}
+OBJETIVO: ${config.objective}
+PÚBLICO-ALVO: ${config.audience}
+TOM: ${config.tone}
+FORMATO: ${config.aspectRatio} (${config.aspectRatio === "4:5" ? "1080x1350" : "1080x1080"})
+MODO DE DESIGN: ${config.designMode === "template" ? `modelo pronto ${config.template}; use rigorosamente esta paleta: ${JSON.stringify(config.palette)}` : "personalizado pela IA; crie paleta própria e identidade visual específica para o tema"}.
+
+Entregue uma estratégia resumida, uma identidade visual consistente e exatamente ${config.slideCount} slides. O primeiro slide deve ser um gancho claro sem sensacionalismo; desenvolva uma ideia por slide com progressão lógica, transições naturais e textos concisos; o último slide deve concluir e trazer CTA educativo, sem promessa ou captação irregular.
+Para cada slide, gere título, texto curto (idealmente até 45 palavras), sugestão visual e orientação de composição. Não inclua texto legal inventado.
+Retorne somente JSON neste formato:
+{"strategy":"...","design":{"style":"...","typography":"...","composition":"...","background":"#000000","primary":"#000000","accent":"#000000","text":"#ffffff","muted":"#cccccc"},"slides":[{"title":"...","text":"...","visual":"...","composition":"..."}]}`;
+}
+
+function carouselSlideRevisionPrompt(topic: string, config: CarouselConfig, design: CarouselDesign, slides: CarouselSlide[], index: number) {
+  const current = slides[index];
+  return `Reescreva somente o slide ${index + 1} de ${slides.length} deste carrossel, sobre "${topic}".
+Objetivo: ${config.objective}
+Público: ${config.audience}
+Tom: ${config.tone}
+Identidade visual que deve permanecer: ${JSON.stringify(design)}
+Papel na sequência: ${index === 0 ? "gancho de abertura" : index === slides.length - 1 ? "fechamento com CTA educativo" : "desenvolvimento"}
+Slide anterior: ${index > 0 ? JSON.stringify(slides[index - 1]) : "nenhum"}
+Slide atual: ${JSON.stringify(current)}
+Slide seguinte: ${index < slides.length - 1 ? JSON.stringify(slides[index + 1]) : "nenhum"}
+Mantenha a progressão, não repita a informação de outros slides, não invente fatos jurídicos. Escreva título e texto curtos. Preserve a identidade visual descrita.
+Retorne somente JSON neste formato: {"slide":{"title":"...","text":"...","visual":"...","composition":"..."}}`;
+}
+
 function isTitleCaptionOptions(value: unknown): value is TitleCaptionOptions {
   if (!value || typeof value !== "object") return false;
   const options = value as Record<string, unknown>;
@@ -210,8 +315,8 @@ function titleCaptionOutputFormat(options: TitleCaptionOptions) {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { format, topic, goal, duration, transcript, mode, missingSections, existingOutputs, titleCaption } = body ?? {};
-    const allowed = ["YouTube longo", "Roteiro normal", "Roteiro Shorts", "Reels", "YouTube Shorts", "TikTok", "Stories", "Comunidade WhatsApp", "Carrossel", "Títulos e Legendas"];
+    const { format, topic, goal, duration, transcript, mode, missingSections, existingOutputs, titleCaption, carousel, slideIndex, carouselSlides, carouselDesign } = body ?? {};
+    const allowed = ["YouTube longo", "Roteiro normal", "Roteiro Shorts", "Reels", "YouTube Shorts", "TikTok", "Stories", "Comunidade WhatsApp", "Carrossel", "Carrosséis", "Títulos e Legendas"];
 
     if (typeof format !== "string" || !allowed.includes(format)) {
       return NextResponse.json({ error: "Escolha um formato válido." }, { status: 400 });
@@ -221,6 +326,9 @@ export async function POST(request: Request) {
     }
     if (format === "Títulos e Legendas" && !isTitleCaptionOptions(titleCaption)) {
       return NextResponse.json({ error: "Revise público, objetivo, plataforma, tom, quantidade de títulos e tamanho da legenda." }, { status: 400 });
+    }
+    if (format === "Carrosséis" && !isCarouselConfig(carousel)) {
+      return NextResponse.json({ error: "Revise as configurações do carrossel e tente novamente." }, { status: 400 });
     }
     const durations = ["1 minuto", "1 minuto e 30 segundos", "3 minutos", "5 minutos", "10 minutos", "15 minutos"];
     if (duration !== undefined && (typeof duration !== "string" || !durations.includes(duration))) {
@@ -233,6 +341,34 @@ export async function POST(request: Request) {
     if (!apiKey) return NextResponse.json({ error: "Configure OPENAI_API_KEY nas variáveis de ambiente do projeto." }, { status: 500 });
 
     const openai = new OpenAI({ apiKey });
+
+    if (mode === "regenerate-carousel-slide") {
+      if (format !== "Carrosséis" || !isCarouselConfig(carousel) ||
+        typeof slideIndex !== "number" || !Number.isInteger(slideIndex) || slideIndex < 0 || slideIndex >= carousel.slideCount ||
+        !Array.isArray(carouselSlides) || carouselSlides.length !== carousel.slideCount ||
+        !carouselSlides.every((slide: unknown) => parseCarouselSlide(slide) !== null) ||
+        !carouselDesign || typeof carouselDesign !== "object") {
+        return NextResponse.json({ error: "Não foi possível validar os dados para regenerar este slide." }, { status: 400 });
+      }
+
+      const design = carouselDesign as Record<string, unknown>;
+      if (["style", "typography", "composition"].some((key) => typeof design[key] !== "string" || (design[key] as string).length > 1000) ||
+        !["background", "primary", "accent", "text", "muted"].every((key) => isHexColor(design[key]))) {
+        return NextResponse.json({ error: "A identidade visual do carrossel é inválida." }, { status: 400 });
+      }
+
+      const prompt = carouselSlideRevisionPrompt(topic.trim(), carousel, design as CarouselDesign, carouselSlides as CarouselSlide[], slideIndex);
+      const response = await openai.responses.create({
+        model: "gpt-4.1-mini",
+        instructions: carouselInstructions,
+        input: prompt,
+        text: { format: { type: "json_object" } },
+      });
+      const parsed = parseJsonObject(response.output_text);
+      const slide = parseCarouselSlide(parsed?.slide);
+      if (!slide) return NextResponse.json({ error: "A IA não retornou um slide válido. Tente novamente." }, { status: 502 });
+      return NextResponse.json({ slide });
+    }
 
     if (mode === "complete-missing-script-sections") {
       if ((format !== "Roteiro normal" && format !== "Roteiro Shorts") || !Array.isArray(missingSections) || missingSections.length === 0 || missingSections.length > scriptSectionKeys.length || !missingSections.every((section: unknown) => typeof section === "string" && scriptSectionKeys.includes(section as ScriptSectionKey))) {
@@ -258,6 +394,38 @@ export async function POST(request: Request) {
     }
 
     if (mode !== undefined) return NextResponse.json({ error: "Modo de geração inválido." }, { status: 400 });
+
+    if (format === "Carrosséis" && isCarouselConfig(carousel)) {
+      const prompt = carouselGenerationPrompt(topic.trim(), carousel);
+      const response = await openai.responses.create({
+        model: "gpt-4.1-mini",
+        instructions: carouselInstructions,
+        input: prompt,
+        text: { format: { type: "json_object" } },
+      });
+      const parsed = parseJsonObject(response.output_text);
+      const slides = parseCarouselSlides(parsed?.slides, carousel.slideCount);
+      const rawDesign = parsed?.design;
+      const strategy = parsed?.strategy;
+      if (!slides || typeof strategy !== "string" || !strategy.trim() || !rawDesign || typeof rawDesign !== "object") {
+        return NextResponse.json({ error: "A IA não retornou um carrossel completo válido. Tente gerar novamente." }, { status: 502 });
+      }
+      const generatedDesign = rawDesign as Record<string, unknown>;
+      const designColors = ["background", "primary", "accent", "text", "muted"];
+      if (designColors.some((key) => !isHexColor(generatedDesign[key])) ||
+        ["style", "typography", "composition"].some((key) => typeof generatedDesign[key] !== "string" || !(generatedDesign[key] as string).trim() || (generatedDesign[key] as string).length > 1000)) {
+        return NextResponse.json({ error: "A identidade visual gerada não pôde ser validada. Tente novamente." }, { status: 502 });
+      }
+      const design: CarouselDesign = {
+        style: generatedDesign.style as string,
+        typography: generatedDesign.typography as string,
+        composition: generatedDesign.composition as string,
+        ...(carousel.designMode === "template" ? carousel.palette : Object.fromEntries(
+          designColors.map((key) => [key, generatedDesign[key]])
+        ) as CarouselConfig["palette"]),
+      };
+      return NextResponse.json({ strategy: strategy.trim(), design, slides });
+    }
 
     const basePrompt = format === "Títulos e Legendas"
       ? promptForTitleCaption(topic.trim(), titleCaption as TitleCaptionOptions)
