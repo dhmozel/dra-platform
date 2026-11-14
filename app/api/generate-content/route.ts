@@ -10,6 +10,8 @@ REGRAS OBRIGATÓRIAS:
 - Não prometa resultados, não garanta direitos sem fatos suficientes e não incentive captação irregular. Respeite a ética profissional da OAB.
 - Não invente leis, artigos, requisitos, decisões, números, estatísticas ou fatos. Quando faltarem dados jurídicos confirmados, sinalize [REVISÃO JURÍDICA NECESSÁRIA] e escreva de modo condicional.
 - Nunca exponha nome, CPF, número de processo ou outros dados identificáveis de clientes.
+- Não use alarmismo, pressão emocional, urgência artificial ou convites insistentes para contratação.
+- Não afirme que alguém tem direito ou obterá um resultado sem análise individual e base jurídica confirmada.
 - Não repita o mesmo gancho só porque o assunto se repete. Todo roteiro termina com CTA adequado.
 - Evite caixa alta excessiva, exclamações em excesso, frases artificiais e excesso de emojis.
 - Não invente timestamps. Para vídeo sem transcrição com tempos, diga que os capítulos precisam ser cronometrados no vídeo final.
@@ -57,6 +59,66 @@ const titleCaptionTones = ["profissional", "educativo", "persuasivo", "descontra
 const titleCaptionLengths = ["curto", "médio", "longo"] as const;
 
 const scriptSectionKeys: ScriptSectionKey[] = ["title", "objective", "hook", "introduction", "development", "conclusion", "cta"];
+
+const ethicalViolationPatterns = [
+  /\b(?:resultado|vitoria|aprovacao|direito|indenizacao|restituicao)\b.{0,40}\b(?:garantido|garantida|certo|certa|assegurado|assegurada)\b/i,
+  /\b(?:garantimos|garante|garantir)\b.{0,50}\b(?:resultado|vitoria|direito|aprovacao|indenizacao|restituicao)\b/i,
+  /\b(?:corra|nao perca|ultima chance|agora ou nunca|antes que seja tarde|urgente|urgencia)\b/i,
+  /\b(?:contrate agora|mande seus documentos|envie seu cpf|chame no direct para contratar)\b/i,
+  /\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b|\bcpf\b.{0,20}\b\d{3}/i,
+  /\b(?:numero do processo|processo)\b.{0,30}\b\d{6,}\b/i,
+];
+
+function hasEthicalViolation(outputs: OutputShape[]) {
+  return outputs.some((output) =>
+    ethicalViolationPatterns.some((pattern) =>
+      pattern.test(normalizeGeneratedText(`${output.title}\n${output.content}`))
+    )
+  );
+}
+
+function buildEthicalFallbackOutputs(sections: ScriptSectionKey[]) {
+  const outputs: Record<ScriptSectionKey, OutputShape> = {
+    title: { title: "Título de trabalho", content: "Um guia informativo para compreender o tema" },
+    objective: { title: "Objetivo e público", content: "Explicar o tema com linguagem acessível, distinguindo informações gerais de situações que dependem de análise individual. Público: pessoas interessadas em compreender o assunto." },
+    hook: { title: "Gancho", content: "Você sabe quais informações são importantes para entender esse tema? Neste vídeo, vamos explicar o assunto com clareza e responsabilidade." },
+    introduction: { title: "Introdução", content: "Neste conteúdo, vamos apresentar o tema de forma educativa. As regras e circunstâncias podem variar, então afirmações jurídicas específicas devem ser confirmadas antes da publicação." },
+    development: { title: "Desenvolvimento", content: "Comece explicando o conceito e o contexto do tema. Em seguida, descreva de forma geral como ele pode se aplicar, quais informações costumam ser relevantes e o que ainda precisa de confirmação jurídica. Não conclua que uma pessoa específica tem direito sem analisar os fatos e a legislação aplicável. [REVISÃO JURÍDICA NECESSÁRIA]" },
+    conclusion: { title: "Conclusão", content: "Em resumo, o tema deve ser compreendido considerando as regras aplicáveis e as particularidades de cada situação. As informações deste roteiro são gerais e precisam ser revisadas juridicamente antes da publicação." },
+    cta: { title: "CTA", content: "Se este conteúdo foi útil, salve ou compartilhe para ajudar outras pessoas a se informarem. Para dúvidas sobre uma situação específica, busque orientação profissional individualizada." },
+  };
+  return sections.map((section) => outputs[section]);
+}
+
+async function generateEthicalScriptOutputs(
+  openai: OpenAI,
+  prompt: string,
+  echoedRequests: Set<string>,
+  sections: ScriptSectionKey[] = scriptSectionKeys,
+) {
+  const instructions = `${baseInstructions}\n\nPADRÃO ESPECÍFICO PARA ROTEIROS: produza conteúdo educativo, informativo e sóbrio; não use promessas de resultado, conclusões jurídicas individuais sem fatos, pressão para contratação, alarmismo nem dados pessoais. Faça uma revisão final do roteiro e reescreva qualquer trecho que possa violar essas regras. Preserve o tema, o formato e todas as seções solicitadas.`;
+  const firstResponse = await openai.responses.create({
+    model: "gpt-4.1-mini",
+    instructions,
+    input: prompt,
+  });
+  let outputs = parseOutputs(firstResponse.output_text, echoedRequests);
+  if (!outputs.length || !hasEthicalViolation(outputs)) return outputs;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const revisionPrompt = `${prompt}\n\nREVISÃO ÉTICA OBRIGATÓRIA: o rascunho abaixo contém trecho que pode ser interpretado como promessa, pressão, alarmismo ou exposição de dado pessoal. Reescreva o roteiro completo em linguagem educativa e equilibrada, mantendo o assunto e as seções. Não mencione esta revisão; devolva somente JSON válido no formato {"outputs":[{"title":"Nome da seção","content":"Texto revisado"}]}.\nRASCUNHO:\n${JSON.stringify(outputs)}`;
+    const revision = await openai.responses.create({
+      model: "gpt-4.1-mini",
+      instructions,
+      input: revisionPrompt,
+    });
+    const revisedOutputs = parseOutputs(revision.output_text, echoedRequests);
+    if (revisedOutputs.length && !hasEthicalViolation(revisedOutputs)) return revisedOutputs;
+    if (revisedOutputs.length) outputs = revisedOutputs;
+  }
+
+  return buildEthicalFallbackOutputs(sections);
+}
 
 function isOutputShape(value: unknown): value is OutputShape {
   if (!value || typeof value !== "object") return false;
@@ -184,13 +246,13 @@ export async function POST(request: Request) {
 
       const missingLabels = (missingSections as ScriptSectionKey[]).join(", ");
       const completionPrompt = `Complete somente estas seções ausentes: ${missingLabels}. Não reescreva, repita nem altere as seções já existentes. Preserve o tema e a duração. Para CTA, produza uma chamada adequada e ética, sem prometer resultados jurídicos.\n\nFORMATO: ${format}\nASSUNTO: ${topic.trim()}\nOBJETIVO/PALAVRA-CHAVE: ${typeof goal === "string" ? goal : "não especificado"}\nDURAÇÃO: ${typeof duration === "string" ? duration : "10 minutos"}\n\nSEÇÕES JÁ GERADAS (apenas contexto; não as repita):\n${JSON.stringify(existingOutputs)}\n\nRetorne JSON válido no formato {"outputs":[{"title":"Nome da seção ausente","content":"Texto gerado para essa seção"}]}. Gere somente as seções pedidas.`;
-      const completion = await openai.responses.create({
-        model: "gpt-4.1-mini",
-        instructions: `${baseInstructions}\nComplete apenas as seções explicitamente pedidas pelo usuário desta chamada. Não devolva as seções que já foram fornecidas como contexto.`,
-        input: completionPrompt,
-      });
       const echoedRequests = new Set([completionPrompt, topic.trim()].map(normalizeGeneratedText));
-      const completedOutputs = parseOutputs(completion.output_text, echoedRequests);
+      const completedOutputs = await generateEthicalScriptOutputs(
+        openai,
+        `${completionPrompt}\n\nComplete apenas as seções explicitamente pedidas. Não repita seções já fornecidas como contexto.`,
+        echoedRequests,
+        missingSections as ScriptSectionKey[],
+      );
       if (completedOutputs.length === 0) return NextResponse.json({ error: "A IA não conseguiu completar as seções ausentes." }, { status: 502 });
       return NextResponse.json({ outputs: completedOutputs });
     }
@@ -204,16 +266,22 @@ export async function POST(request: Request) {
       ? "\nPara roteiros, inclua blocos distintos para título de trabalho, objetivo e público, gancho de abertura, introdução, desenvolvimento com todas as seções necessárias, conclusão e CTA. O campo content de cada bloco deve conter texto efetivamente gerado; não copie estas instruções ou o pedido do usuário como resultado."
       : "";
     const generationPrompt = `${basePrompt}${scriptSectionsInstruction}`;
-    const response = await openai.responses.create({
-      model: "gpt-4.1-mini",
-      instructions: baseInstructions,
-      input: generationPrompt,
-      ...(format === "Títulos e Legendas" && isTitleCaptionOptions(titleCaption)
-        ? { text: { format: titleCaptionOutputFormat(titleCaption) } }
-        : {}),
-    });
     const echoedRequests = new Set([topic.trim(), generationPrompt].map(normalizeGeneratedText));
-    const outputs = parseOutputs(response.output_text, echoedRequests);
+    const isScriptFormat = format === "Roteiro normal" || format === "Roteiro Shorts";
+    let outputs: OutputShape[];
+    if (isScriptFormat) {
+      outputs = await generateEthicalScriptOutputs(openai, generationPrompt, echoedRequests);
+    } else {
+      const response = await openai.responses.create({
+        model: "gpt-4.1-mini",
+        instructions: baseInstructions,
+        input: generationPrompt,
+        ...(format === "Títulos e Legendas" && isTitleCaptionOptions(titleCaption)
+          ? { text: { format: titleCaptionOutputFormat(titleCaption) } }
+          : {}),
+      });
+      outputs = parseOutputs(response.output_text, echoedRequests);
+    }
     if (!outputs.length) return NextResponse.json({ error: "A IA não retornou conteúdo utilizável." }, { status: 502 });
     return NextResponse.json({ outputs });
   } catch (error) {
